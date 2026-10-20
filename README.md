@@ -130,10 +130,15 @@ reverse-engineer-anything/
 - Claude Code：`~/.claude/skills/`
 - Codex：`~/.codex/skills/`
 
+## 作者
+
+**Lai123** — 豆包 CLI 适配版改造者
+
 ## 引用
 
 - 原始项目：[morluto/rea](https://github.com/morluto/rea)
 - npm 包：[rea-agents](https://www.npmjs.com/package/rea-agents)
+- 官方网站：https://rea.tools
 
 ## License
 

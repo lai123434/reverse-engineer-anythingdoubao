@@ -1,5 +1,10 @@
 # Reverse Engineer Anything (REA) — 豆包 CLI 适配版
 
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![Node](https://img.shields.io/badge/node-18%2B-green.svg)
+![Ghidra](https://img.shields.io/badge/ghidra-11%2B-orange.svg)
+![Platform](https://img.shields.io/badge/platform-windows%20%7C%20linux%20%7C%20macos-lightgrey.svg)
+
 > 基于 [rea-agents](https://www.npmjs.com/package/rea-agents) 6.7.0 的逆向工程 Skill，深度改造为豆包/字节系 Agent 原生 CLI 驱动版。
 
 ## 这是什么？

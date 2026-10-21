@@ -63,7 +63,40 @@ npx -y rea-agents@6.7.0 decompile "C:\path\to\app.exe" 0x140002910 --provider gh
 | 伪代码反编译 | `decompile <path> <地址> --provider ghidra` | 反编译为 C 伪代码 |
 | 交叉引用 | `xrefs <path> <地址> --provider ghidra` | 谁调用了这个函数 |
 | 特性追踪 | `trace <path> "关键词" --provider ghidra` | 追踪代码关系 |
+| EXE 模块化粗筛 / 风险打分 | `python tools/pe_module_scan.py <exe> --report r.md [--quiet] [--min-confidence high]` | 导入表+字符串归类模块（注入/键盘记录/提权/凭据窃取/反调试/反沙盒/勒索/外泄等）、风险打分、签名/加壳/类型识别、外联证据、高危置顶、中文报告（零依赖，Ghidra 前第一层；`--quiet` 精简结论，退出码 0/1/2 供流水线） |
 | JS/Electron 分析 | `analyze-javascript-application <path>` | Web 应用静态分析 |
+
+### 本地零依赖粗筛（Ghidra 前第一层，无需 Node/Ghidra）
+
+```powershell
+# 基础扫描 + 中文 Markdown 报告 + 结构化 JSON
+python tools\pe_module_scan.py "C:\path\app.exe" --report r.md --json r.json
+
+# 流水线/CI：只打印风险结论，靠退出码判定（0 安全 / 1 可疑 / 2 高危 / 3 非PE）
+python tools\pe_module_scan.py "C:\path\app.exe" --quiet
+
+# 只看高置信模块（至少命中 2 个精确 API；纯字符串高危模块始终保留）
+python tools\pe_module_scan.py "C:\path\app.exe" --min-confidence high
+
+# 批量分诊：递归扫描目录下 exe/dll，按风险分降序排名，--report 落盘 Markdown 总表
+python tools\pe_module_scan.py --batch "C:\downloads" --report rank.md
+
+# 基线巡检：--baseline 存哈希+分数，复扫标注 新增/已替换/风险上升/已见
+python tools\pe_module_scan.py --batch "C:\downloads" --baseline db.json
+```
+
+参数：`--report` 报告路径、`--json` 结构化结果（顶层含 `network_evidence` 外联证据）、
+`--quiet` 精简输出、`--min-confidence high|medium|low`、`--batch <目录>` 批量分诊排名、
+`--baseline <json>` 基线指纹复扫对比、`--version`。单文件 EXE 用 `tools\build_exe.bat` 打包。
+
+能力：导入表精确 API 匹配 + 字符串粗归类，覆盖注入（含原生 NtWriteVirtualMemory /
+NtUnmapViewOfSection 进程空洞）、提权令牌/模拟、键盘记录、录音摄像头、截屏录屏、
+凭据窃取、反取证（含现代 EvtClearLog）、破坏安全软件、反调试、反沙盒、勒索、
+数据外泄、下载执行、持久化；报告含节区熵与 X/R/W 权限表（高熵/RWX 标⚠️）、
+类型识别（.NET/Go/Electron/NW.js/CEF/Node/Python/加壳）、PE 头解析（EXE/DLL、GUI/控制台
+子系统、编译时间戳、签名）、外联 URL/IP/域名过滤（公网列出并建议核查，内网/回环/占位域名
+归入参考不计可疑），并对“注入+外联”“注入+持久化”“凭据+外联”等高危组合给联动判断；
+非 PE（ELF/Mach-O/Java/ZIP）识别魔数并给出原版 rea-agents 对应命令引导。
 
 ## 命令模式说明
 
@@ -118,6 +151,11 @@ reverse-engineer-anything/
 ├── README.md                         # 本文件
 ├── LICENSE                          # MIT 许可证
 ├── .gitignore
+├── tools/
+│   ├── pe_module_scan.py            # EXE 模块化粗筛/风险打分（零依赖本地脚本）
+│   ├── test_scan.py                 # 回归测试基线（python tools/test_scan.py，40 项断言）
+│   ├── build_exe.bat                # PyInstaller 单文件 EXE 打包脚本
+│   └── ANALYSIS_VM.md               # 隔离虚拟机(dc)真实样本分析操作手册
 └── references/
     ├── command-catalog.md           # 完整 153 个命令分类索引
     ├── javascript-applications.md   # JS/Electron 分析详细流程

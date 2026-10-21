@@ -32,6 +32,7 @@ description: 用户需要逆向分析 exe / dll / apk / asar / 固件等二进�
 
 - [命令模式说明](#命令模式说明重要) — 两种命令模式的区别（先看这个）
 - [三分钟快速上手](#三分钟快速上手) — 拿到 exe 先跑这 5 步
+- [EXE 模块化拆分粗筛](#exe-模块化拆分粗筛第一层本地脚本) — Ghidra 前先列模块清单、按需深挖（零依赖本地脚本）
 - [命令速查表](#命令速查表按功能分组) — 按功能分类的命令索引
 - [路由决策](#路由决策先判断目标类型) — 根据目标类型选命令
 - [Ghidra Native 分析](#native-pe--elf--mach-o) — 原生反编译详细
@@ -49,6 +50,7 @@ description: 用户需要逆向分析 exe / dll / apk / asar / 固件等二进�
 | 我想... | 第一步跑什么 |
 |---------|-------------|
 | 分析一个陌生的 .exe / .dll | `inspect-artifact <path>` |
+| 先快速看 exe 有哪些功能模块、有无高危行为（不启动 Ghidra） | `python tools\pe_module_scan.py <path> --report r.md` |
 | 看看这个 exe 是不是 C# 写的 | `inspect-managed-artifact <path>` |
 | 搜 exe 里的某个字符串（公司名/API名） | `search <path> "关键词" --kind strings --provider ghidra` |
 | 反编译某个函数看伪代码 | `decompile <path> <地址> --provider ghidra` |
@@ -111,6 +113,97 @@ npx -y rea-agents@6.7.0 search "C:\path\to\app.exe" "WinMain" --kind procedures 
 # 第 5 步：反编译某个函数看伪代码（用上一步搜到的地址）
 npx -y rea-agents@6.7.0 decompile "C:\path\to\app.exe" 0x140002910 --provider ghidra --format json
 ```
+
+## EXE 模块化拆分粗筛（第一层，本地脚本）
+
+> 解决"信息过载"：不要一上来就让 Ghidra 吐出全部反编译结果。先用零依赖本地脚本
+> 把 EXE 内部能力粗分成功能模块，**先给清单、由用户选模块，再对单个模块深挖**。
+
+### 定位
+
+- 位置：`tools/pe_module_scan.py`，**纯 Python 标准库，无需 pip 装包**，可直接 PyInstaller 打包单 EXE。
+- 原理：解析 PE **导入表**（DLL + API）+ 提取 ASCII/UTF-16 **字符串**，按规则归类，**不启动 Ghidra、不运行目标**，秒级出结果。
+- 与 Ghidra 的关系：本脚本是第一层粗筛；选定模块后，再用 Ghidra `trace`/`decompile`/`xrefs` 对该模块 API 做调用链深挖。
+
+### 用法
+
+```powershell
+# 基础：终端打印模块清单 + 风险评分
+python tools\pe_module_scan.py "C:\path\to\app.exe"
+
+# 完整：同时生成中文 Markdown 报告和结构化 JSON
+python tools\pe_module_scan.py "C:\path\to\app.exe" `
+  --report report.md --json result.json
+
+# 只看高置信模块（high/medium/low，默认 low 全显），隐藏弱字符串噪声
+python tools\pe_module_scan.py "C:\path\to\app.exe" --min-confidence high
+
+# 批量分诊：递归扫描目录 exe/dll，按风险分降序排名，--report 落盘总表
+python tools\pe_module_scan.py --batch "C:\downloads" --report rank.md
+
+# 基线巡检：--baseline 存哈希+分数，复扫标注 新增/已替换/风险上升/已见
+python tools\pe_module_scan.py --batch "C:\downloads" --baseline db.json
+```
+
+### 输出怎么读
+
+- **风险评分 0-100 / 等级**：安全低关注(<20) / 低危需关注(20-39) / 可疑需复核(40-69) / 高危(≥70)。
+  高危项（进程注入、键盘记录、提权、录音、截屏、下载执行、文件加密、服务持久化等）计入评分；
+  `IsDebuggerPresent`、`OpenProcessToken`、`OpenClipboard` 等运行库常见项**只提示不计分**。
+  **已签名样本**（多为合法系统/厂商程序）原始分按 0.35 减免，避免系统库普遍导出高危 API 造成满分误报。
+- **样本信息**：EXE/DLL、GUI/控制台子系统、编译时间戳、架构、SHA-256、数字签名有无、节区数、**类型/运行时**（.NET 托管 / Go /
+  Electron/NW.js / CEF / Node / Python 打包 / UPX 加壳 / 原生 C/C++）、
+  加壳/可疑提示：**高熵节区**（熵≥7.0）、**节区名识别加壳器**（UPX/VMProtect/Themida/ASPack）、
+  **入口点不落节区**、**RWX 可写可执行节区**；报告附节区明细表（熵 + X/R/W 权限，高熵/RWX 标⚠️）；
+  类型识别会给出换用对应工具链的提示。
+- **外联证据**：自动提取硬编码 URL / IPv4 / 域名；公网 IP/域名列出并建议核查归属/信誉，
+  回环/内网（10/192.168/172.16-31/169.254）归入 `private_ips` 参考、不计可疑；过滤微软帮助链接、
+  占位域名（example.com）、版本号和源文件名噪声；JSON 顶层 `network_evidence` 供程序消费。
+- **非 PE 引导**：识别 ELF/Mach-O/Java class/ZIP 魔数，给出对应原版 `inspect-*` 命令，不笼统报错。
+- **批量与基线**：`--batch` 目录分诊排名并可落盘 Markdown；`--baseline` 指纹库复扫对比新增/替换/风险上升/已见。
+- **组合联动判断**：命中“注入+外联”“注入+持久化”“凭据+外联”等高危组合时，小结给出特征链提示（仅提示，不改阈值）。
+- **模块清单**：每个模块带置信度（高=≥2 精确 API；中=1 精确 API；低=仅弱字符串），
+  列出命中的精确 API 与字符串证据，并附一条对应的 Ghidra/REA 深挖命令。
+- **模块分类**：网络通信 / 图形界面 / 加密编码 / 文件读写 / 进程管理 / 注册表读写 /
+  服务管理 / 动态加载延迟绑定 / 自启动持久化 / 进程注入(高危) / 反调试 / 提权令牌 /
+  录音采集 / 屏幕截取 / 剪贴板 / 键盘记录(高危) / 下载执行 / 文件加密 /
+  凭据窃取·反取证(高危) / 反虚拟机·反沙盒 / 数据外泄(FTP/邮件) / 破坏安全软件 /
+  勒索特征(高危)。
+
+### 打包单 EXE
+
+```powershell
+# 在 tools 目录执行，产物 dist\pe_module_scan.exe（需先 pip install pyinstaller）
+tools\build_exe.bat
+```
+
+### 退出码（供流水线/CI 判定）
+
+- `0` 安全 / 低关注 / 低危；`1` 可疑需人工复核；`2` 高危；`3` 非有效 PE；`1` 也用于文件不存在/读取失败。
+- `--min-confidence high|medium|low` 过滤低置信噪声模块（默认 low 全显）；纯字符串高危模块（勒索/反沙盒）命中字符串时始终保留。
+- `--quiet` 精简为只打印风险结论，供流水线；`--version` 打印版本。
+- 回归测试：`python tools\test_scan.py`（99 项断言，改动后必跑；含计分API→模块归类对账守护）。
+
+### 粗筛后如何深挖（衔接 Ghidra）
+
+1. 从模块清单挑用户关心的模块，记下命中的代表 API。
+2. 用 `search --kind strings` / `trace` 定位该 API，再 `xrefs` 找调用处、`decompile` 看伪代码。
+3. **纪律**：粗筛结论是"具备该能力"的**静态推断**，不等于运行时真的使用；
+   最终报告须区分【观察 / 推断 / 未知】，命中高危 API 也要结合反编译确认后再下恶意结论。
+
+### 边界
+
+- 仅支持 Windows PE（exe/dll）；ELF/Mach-O/APK 走对应 REA 命令。
+- 粗筛靠导入表 + 字符串，静态链接进自身、无导入表的能力识别不到，精度有限。
+
+### 已知限制与后续路线（本地零依赖层之后）
+
+- **已放弃（易错、增益低）**：VS_VERSION_INFO 厂商/产品名启发式提取、PE 导出表解析——
+  纯手工对齐不可靠，易取值为空或截断，不引入错误信息。
+- **下一阶段需 Ghidra/反汇编**：调用图聚类替代导入表粗分类，提升模块划分精度；
+  确认高危 API 是否真正被调用（消除"具备能力但未使用"的误报）。
+- **需真实样本校准**：收集一批已知良性/恶意样本，回归校准阈值与特征库。
+- **流水线方向**：粗筛（本脚本，退出码 0/1/2）→ 高危模块自动交 Ghidra `trace/decompile` 深挖。
 
 ## 命令速查表（按功能分组）
 

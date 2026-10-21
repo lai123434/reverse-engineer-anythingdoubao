@@ -47,6 +47,22 @@ npx -y rea-agents@6.7.0 search "C:\path\to\app.exe" "WinMain" --kind procedures 
 npx -y rea-agents@6.7.0 decompile "C:\path\to\app.exe" 0x140002910 --provider ghidra --format json
 ```
 
+## 实测拆解案例：抖音桌面端（静态粗筛）
+
+> 仅做安全体检，未运行程序、不提取业务逻辑、不修改原软件。
+
+用本地零依赖粗筛器对抖音桌面端做了一次静态分诊：
+
+| 对象 | 结果 |
+|---|---|
+| 主程序 `douyin.exe`（已签名，2.75 MB，x64，编译 2026-09-10） | **25/100 低危（需关注）** |
+| 全目录 153 个 exe/dll 批量分诊 | **高危 0、可疑 0**，最高 25 分 |
+
+**拆出的能力画像**：Electron/Chromium 外壳，具备 WinHTTP 联网收发、文件读写、进程管理、运行时动态加载等能力。静态导入表里的远程内存/线程 API（`CreateRemoteThread`/`WriteProcessMemory` 等）是 Chromium 多进程与 GPU 沙箱的正常能力，样本**无硬编码外联 IP/域名**，结合已签名判定为非恶意。
+
+- 主程序报告：[analysis/douyin_main.md](analysis/douyin_main.md)
+- 153 文件批量排名：[analysis/douyin_rank.md](analysis/douyin_rank.md)
+
 ## 核心功能（Windows 已验证）
 
 | 功能 | 命令 | 说明 |
@@ -153,9 +169,13 @@ reverse-engineer-anything/
 ├── .gitignore
 ├── tools/
 │   ├── pe_module_scan.py            # EXE 模块化粗筛/风险打分（零依赖本地脚本）
-│   ├── test_scan.py                 # 回归测试基线（python tools/test_scan.py，40 项断言）
+│   ├── test_scan.py                 # 回归测试基线（python tools/test_scan.py，101 项断言）
 │   ├── build_exe.bat                # PyInstaller 单文件 EXE 打包脚本
 │   └── ANALYSIS_VM.md               # 隔离虚拟机(dc)真实样本分析操作手册
+├── analysis/                        # 实测拆解案例报告（抖音/剪映）
+│   ├── douyin_main.md
+│   ├── douyin_rank.md
+│   └── jianying_main.md
 └── references/
     ├── command-catalog.md           # 完整 153 个命令分类索引
     ├── javascript-applications.md   # JS/Electron 分析详细流程

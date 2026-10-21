@@ -169,7 +169,7 @@ reverse-engineer-anything/
 ├── .gitignore
 ├── tools/
 │   ├── pe_module_scan.py            # EXE 模块化粗筛/风险打分（零依赖本地脚本）
-│   ├── test_scan.py                 # 回归测试基线（python tools/test_scan.py，101 项断言）
+│   ├── test_scan.py                 # 回归测试基线（python tools/test_scan.py，107 项断言）
 │   ├── build_exe.bat                # PyInstaller 单文件 EXE 打包脚本
 │   └── ANALYSIS_VM.md               # 隔离虚拟机(dc)真实样本分析操作手册
 ├── analysis/                        # 实测拆解案例报告（抖音/剪映）

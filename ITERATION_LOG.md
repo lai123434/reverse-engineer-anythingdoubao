@@ -5,7 +5,7 @@
 
 ## 当前状态（2026-10-21）
 
-- 回归断言 **99 项全绿**；13 个合法系统程序/库（notepad x86/x64、calc、taskmgr、
+- 回归断言 **107 项全绿**；13 个合法系统程序/库（notepad x86/x64、calc、taskmgr、
   regedit、explorer、kernel32/advapi32/user32/gdi32/wininet/bcrypt/ws2_32）全部落
   安全/低危区，无高危误报。
 - 修复节区 Characteristics 偏移（b+36，误作 b+24），此前 RWX 可写可执行检测恒不命中。
@@ -58,6 +58,17 @@
 - **批量分诊 `--batch`**：递归扫目录 exe/dll，按风险分降序排名，`--report` 落盘 Markdown 总表。
 - **基线巡检 `--baseline`**：指纹库(sha256+分数)复扫，标注 新增/已替换/风险上升(≥10)/已见。
 - 报告/汇总 Markdown 统一 UTF-8 BOM，记事本直开不乱码。
+
+## 第三轮：代码复查与健壮性修复（2026-10-21，107 项断言）
+
+通读 `pe_module_scan.py` 全量复查后修复：
+- 批量子进程显式 `encoding="utf-8", errors="replace"`，避免中文 Windows 按 GBK
+  解码子进程输出触发 UnicodeDecodeError 而误判失败。
+- 批量单文件超时/读取失败单列“失败”、非PE单列，**绝不落入“安全”**（原先 else
+  分支会把失败误标安全，掩盖问题）；抽 `_batch_tag()` 纯函数并加断言。
+- 失败条目不写入基线指纹库，避免下次复扫把失败文件当成“已见/已替换”。
+- MapiSendMail(mapi32.dll) 补入 network 的 DLL 限定，邮件外泄正确归入网络模块。
+- 时间戳渲染由 `datetime.UTC`(Py3.11+) 改为 `datetime.timezone.utc`，兼容旧版本。
 
 ## 待用户 / 外部项（本机无法自动完成）
 1. **真实样本动态校准**：dc 虚拟机已加固（删共享、clean-base 快照、剪贴板/拖拽关），

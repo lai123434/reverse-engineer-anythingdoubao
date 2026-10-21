@@ -227,6 +227,15 @@ check("基线-新增", mod._baseline_status(None, "abc", 5) == "新增")
 check("基线-已替换(哈希变)", mod._baseline_status({"sha": "old", "score": 5}, "new", 5) == "已替换")
 check("基线-风险上升(≥10)", mod._baseline_status({"sha": "s", "score": 10}, "s", 25) == "风险上升")
 check("基线-已见(同哈希小波动)", mod._baseline_status({"sha": "s", "score": 10}, "s", 12) == "已见")
+# MAPI 邮件外泄经 mapi32.dll 归入网络模块（scope 含 mapi32.dll）
+_mapi = {x["key"]: x for x in mod.classify([("mapi32.dll", "MapiSendMail")], [])}
+check("MapiSendMail归network模块", "network" in _mapi and _mapi["network"]["n_api"] >= 1)
+# 批量标签：超时/读取失败必须标“失败”，绝不算安全
+check("批量失败标失败而非安全", mod._batch_tag(-1, -1) == "失败")
+check("批量0分安全", mod._batch_tag(0, 0) == "安全")
+check("批量高危标签", mod._batch_tag(70, 2) == "高危")
+check("批量可疑标签", mod._batch_tag(45, 1) == "可疑")
+check("批量非PE标签", mod._batch_tag(-1, 3) == "非PE")
 _pm = {x["key"]: x for x in mod.classify([], ["userinit", "encodedcommand"])}
 check("驻留串归persistence模块", "persistence" in _pm and _pm["persistence"]["n_str"] >= 2)
 _pm2 = {x["key"]: x for x in mod.classify([], ["sethc.exe", "image file execution options"])}

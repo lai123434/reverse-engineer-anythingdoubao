@@ -60,7 +60,7 @@ MODULES = [
         "dlls": ["ws2_32.dll", "wininet.dll", "winhttp.dll", "dnsapi.dll",
                  "iphlpapi.dll", "mswsock.dll"],
         "scope": ["ws2_32.dll", "mswsock.dll", "wininet.dll", "winhttp.dll",
-                  "dnsapi.dll"],
+                  "dnsapi.dll", "mapi32.dll"],
         "strings": ["http://", "https://", "ftp://", "ws://", "wss://",
                     "smtp://", "mailto:", "mapi", "bitsadmin", "backgroundcopy"],
         "weight": 100,
@@ -924,7 +924,8 @@ def build_report(path, data, imports, is64, modules, total, level, findings, com
         _ts = pe_info.get("timestamp") or 0
         if 86400 < _ts < 3250368000:
             try:
-                _t = datetime.datetime.fromtimestamp(_ts, datetime.UTC).strftime("%Y-%m-%d %H:%M UTC")
+                _t = datetime.datetime.fromtimestamp(
+                    _ts, datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
                 lines.append(f"| 编译时间戳 | {_t} |")
             except (OSError, ValueError):
                 pass
@@ -1098,6 +1099,19 @@ def _baseline_status(prev, sha, score):
     return "已见"
 
 
+def _batch_tag(score, rc):
+    """批量单文件判定标签：高危/可疑/非PE/失败/安全；超时或读取失败绝不算安全。"""
+    if rc == 2:
+        return "高危"
+    if rc == 1:
+        return "可疑"
+    if rc == 3:
+        return "非PE"
+    if score < 0 or rc < 0:
+        return "失败"
+    return "安全"
+
+
 def _batch_scan(batch_dir, min_confidence, report=None, baseline=None):
     """递归扫描目录下 exe/dll，子进程复用单文件逻辑，按风险分降序排名汇总。"""
     if not os.path.isdir(batch_dir):
@@ -1139,17 +1153,23 @@ def _batch_scan(batch_dir, min_confidence, report=None, baseline=None):
             proc = subprocess.run(
                 [sys.executable, me, p, "--quiet",
                  "--min-confidence", min_confidence],
-                capture_output=True, text=True, timeout=60)
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=60)
             m = re.search(r"风险评分：(\d+)/100", proc.stdout)
             score = int(m.group(1)) if m else -1
             rc = proc.returncode
-        except (subprocess.TimeoutExpired, OSError):
+        except (subprocess.TimeoutExpired, OSError, UnicodeDecodeError):
             score, rc = -1, -1
 
-        # 基线对比：新增 / 已替换 / 风险上升(≥10) / 已见
-        status = _baseline_status(old_db.get(rel), sha, score)
-        new_db[rel] = {"sha": sha, "score": score,
-                       "ts": datetime.datetime.now().isoformat(timespec="seconds")}
+        # 基线对比：新增 / 已替换 / 风险上升(≥10) / 已见；非PE单列，读取/超时失败不污染基线库
+        if score >= 0:
+            status = _baseline_status(old_db.get(rel), sha, score)
+            new_db[rel] = {"sha": sha, "score": score,
+                           "ts": datetime.datetime.now().isoformat(timespec="seconds")}
+        elif rc == 3:
+            status = "非PE"
+        else:
+            status = "失败"
         rows.append((score, rc, rel, status))
 
     rows.sort(key=lambda r: r[0], reverse=True)
@@ -1158,16 +1178,11 @@ def _batch_scan(batch_dir, min_confidence, report=None, baseline=None):
     hi = sus = 0
     md_rows = []
     for score, rc, rel, status in rows:
-        if rc == 2:
+        tag = _batch_tag(score, rc)
+        if tag == "高危":
             hi += 1
-            tag = "高危"
-        elif rc == 1:
+        elif tag == "可疑":
             sus += 1
-            tag = "可疑"
-        elif rc == 3:
-            tag = "非PE"
-        else:
-            tag = "安全"
         sc = str(score) if score >= 0 else "ERR"
         print(f"{sc:>4}  {rc:>4}  {tag:<4}  {status:<6} {rel}")
         md_rows.append((sc, rc, tag, status, rel))
@@ -1337,7 +1352,8 @@ def main():
             _ts = pe_info.get("timestamp") or 0
             if 86400 < _ts < 3250368000:  # 1972 ~ 2075 合理范围
                 try:
-                    _t = datetime.datetime.fromtimestamp(_ts, datetime.UTC).strftime("%Y-%m-%d %H:%M UTC")
+                    _t = datetime.datetime.fromtimestamp(
+                        _ts, datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
                     print(f"编译时间戳：{_t}")
                 except (OSError, ValueError):
                     pass

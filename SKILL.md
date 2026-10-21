@@ -187,7 +187,7 @@ tools\build_exe.bat
 - `0` 安全 / 低关注 / 低危；`1` 可疑需人工复核；`2` 高危；`3` 非有效 PE；`1` 也用于文件不存在/读取失败。
 - `--min-confidence high|medium|low` 过滤低置信噪声模块（默认 low 全显）；纯字符串高危模块（勒索/反沙盒）命中字符串时始终保留。
 - `--quiet` 精简为只打印风险结论，供流水线；`--version` 打印版本。
-- 回归测试：`python tools\test_scan.py`（110 项断言，改动后必跑；含计分API→模块归类对账守护）。
+- 回归测试：`python tools\test_scan.py`（123 项断言，改动后必跑；含计分API→模块归类对账守护、外部工具链容错）。
 - 解析层对截断/损坏 PE 做边界防护：thunk 宽度、数据目录、optional header 越界均返回 None，不抛 struct/IndexError；失败扫描与缺哈希条目不污染基线库。
 
 ### 粗筛后如何深挖（衔接 Ghidra）

@@ -320,5 +320,21 @@ _rep5 = mod.build_report("p.exe", b"MZ", [], False,
                          net_ev={"urls": [], "ips": [], "domains": []}, external=_ext_empty)
 check("FLOSS空列表提示未发现", "未发现栈/解码隐藏字符串" in _rep5)
 
+# FLOSS JSON 纯函数容错
+_fj_ok = '{"stack_strings":[{"string":"aaa"},{"string":"bbb"}],"decoded_strings":[{"string":"aaa"}]}'
+_fs, _fe = mod._parse_floss_strings(_fj_ok)
+check("FLOSS解析提取并去重", _fs == ["aaa", "bbb"] and _fe is None)
+_fs2, _fe2 = mod._parse_floss_strings('["not","object"]')
+check("FLOSS非对象报错", _fs2 is None and "非对象" in _fe2)
+_fs3, _fe3 = mod._parse_floss_strings("not-a-json{{{")
+check("FLOSS非JSON报错", _fs3 is None and "解析失败" in _fe3)
+
+_bad_ext = {"die": "broken-not-tuple", "floss": None, "upx": None, "packer": False}
+_rep6 = mod.build_report("p.exe", b"MZ", [], False,
+                         [_mk("network", 2)], 30, "低危", [], [],
+                         None, None,
+                         net_ev={"urls": [], "ips": [], "domains": []}, external=_bad_ext)
+check("坏external结构不崩", "外部工具补充" in _rep6)
+
 print(f"\n结果：{PASS} 通过 / {FAIL} 失败")
 sys.exit(1 if FAIL else 0)

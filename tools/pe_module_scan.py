@@ -812,12 +812,13 @@ def find_tool(name):
 
 
 def _run_capture(cmd, timeout):
-    """统一子进程：UTF-8 容错、超时；成功(退出码0)返回 stdout 文本，否则 None。"""
+    """统一子进程：UTF-8 容错、超时；成功(退出码0)返回 stdout 文本，否则 None。
+    外部工具是可选增强，任何异常都不得拖垮零依赖主流程。"""
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True,
                               encoding="utf-8", errors="replace", timeout=timeout)
         return proc.stdout.strip() if proc.returncode == 0 else None
-    except (subprocess.TimeoutExpired, OSError, UnicodeDecodeError):
+    except Exception:
         return None
 
 
@@ -832,6 +833,23 @@ def run_die(path, die_bin, timeout=30):
     return lines, None
 
 
+def _parse_floss_strings(text):
+    """从 FLOSS -j 文本提取栈/解码字符串；返回 (列表|None, 错误|None)，纯函数可测。"""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return None, "FLOSS 输出解析失败（非 JSON）"
+    if not isinstance(data, dict):
+        return None, "FLOSS 输出格式异常（非对象）"
+    out = []
+    for key in ("stack_strings", "decoded_strings"):
+        for item in data.get(key, []) or []:
+            s = item.get("string") if isinstance(item, dict) else item
+            if s and str(s) not in out:
+                out.append(str(s))
+    return out[:40], None
+
+
 def run_floss(path, floss_bin, timeout=180):
     """FLOSS 提取栈/解码(混淆)字符串（JSON 输出直接解析），不重复静态串；
     返回 (字符串列表|None, 错误|None)。"""
@@ -841,17 +859,7 @@ def run_floss(path, floss_bin, timeout=180):
                         "-n", "6", path], timeout)
     if out is None:
         return None, "FLOSS 运行失败或超时（大文件较慢，可加长超时）"
-    try:
-        data = json.loads(out)
-    except ValueError:
-        return None, "FLOSS 输出解析失败（非 JSON）"
-    strings = []
-    for key in ("stack_strings", "decoded_strings"):
-        for item in data.get(key, []) or []:
-            s = item.get("string") if isinstance(item, dict) else item
-            if s and str(s) not in strings:
-                strings.append(str(s))
-    return strings[:40], None
+    return _parse_floss_strings(out)
 
 
 # ----------------------------------------------------------------------------
@@ -1163,7 +1171,7 @@ def build_report(path, data, imports, is64, modules, total, level, findings, com
     if external:
         lines.append("## 外部工具补充（可选开关接入）\n")
         die = external.get("die")
-        if die:
+        if isinstance(die, tuple) and len(die) == 2:
             dl, de = die
             if dl:
                 lines.append("### DIE 查壳 / 编译器识别")
@@ -1175,7 +1183,7 @@ def build_report(path, data, imports, is64, modules, total, level, findings, com
             else:
                 lines.append("- DIE：未识别到额外壳/编译器信息")
         fl = external.get("floss")
-        if fl:
+        if isinstance(fl, tuple) and len(fl) == 2:
             fs, fe = fl
             if fs:
                 lines.append("### FLOSS 隐藏（栈/解码）字符串")
@@ -1501,8 +1509,10 @@ def main():
                     print("\n[DIE 查壳 / 编译器识别]")
                     for ln in dl:
                         print("  " + ln)
-                else:
+                elif de:
                     print(f"\n[DIE] {de}")
+                else:
+                    print("\n[DIE] 未识别到额外壳/编译器信息")
         if args.floss:
             external["floss"] = run_floss(path, find_tool("floss"))
             fs, fe = external["floss"]
@@ -1511,8 +1521,10 @@ def main():
                     print("\n[FLOSS 隐藏（栈/解码）字符串]")
                     for s in fs:
                         print("  " + s)
-                else:
+                elif fe:
                     print(f"\n[FLOSS] {fe}")
+                else:
+                    print("\n[FLOSS] 未发现栈/解码隐藏字符串")
         external["upx"] = find_tool("upx")
         external["packer"] = bool(pe_info and pe_info.get("packer"))
 

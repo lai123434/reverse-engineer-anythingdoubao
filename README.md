@@ -99,11 +99,15 @@ python tools\pe_module_scan.py --batch "C:\downloads" --report rank.md
 
 # 基线巡检：--baseline 存哈希+分数，复扫标注 新增/已替换/风险上升/已见
 python tools\pe_module_scan.py --batch "C:\downloads" --baseline db.json
+
+# 可选外部工具链（缺工具自动跳过）：--die 调 DIE 查壳/编译器，--floss 提隐藏字符串
+python tools\pe_module_scan.py "C:\path\app.exe" --die --floss --report r.md
 ```
 
 参数：`--report` 报告路径、`--json` 结构化结果（顶层含 `network_evidence` 外联证据）、
 `--quiet` 精简输出、`--min-confidence high|medium|low`、`--batch <目录>` 批量分诊排名、
-`--baseline <json>` 基线指纹复扫对比、`--version`。单文件 EXE 用 `tools\build_exe.bat` 打包。
+`--baseline <json>` 基线指纹复扫对比、`--die`/`--floss` 可选接入 DIE/FLOSS、`--version`。
+单文件 EXE 用 `tools\build_exe.bat` 打包。
 
 能力：导入表精确 API 匹配 + 字符串粗归类，覆盖注入（含原生 NtWriteVirtualMemory /
 NtUnmapViewOfSection 进程空洞）、提权令牌/模拟、键盘记录、录音摄像头、截屏录屏、

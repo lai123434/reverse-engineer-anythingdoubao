@@ -26,6 +26,7 @@ import json
 import math
 import os
 import re
+import shutil
 import struct
 import subprocess
 import sys
@@ -785,6 +786,75 @@ def detect_artifact_format(data):
 
 
 # ----------------------------------------------------------------------------
+# 可选外部工具链（DIE / FLOSS / UPX）：缺工具则跳过，绝不影响零依赖主流程
+# ----------------------------------------------------------------------------
+# 探测顺序：先 PATH(shutil.which)，再候选绝对路径
+TOOL_SEARCH = {
+    "die": ["diec.exe", r"C:\Tools\die\die\diec.exe"],
+    "floss": ["floss.exe", "floss",
+              os.path.expandvars(
+                  r"%LOCALAPPDATA%\Microsoft\WinGet\Packages\Mandiant.FLOSS_Microsoft.Winget.Source_8wekyb3d8bbwe\floss.exe")],
+    "upx": ["upx.exe", r"C:\Tools\upx\upx-5.2.1-win64\upx.exe"],
+}
+
+
+def find_tool(name):
+    """返回可执行路径或 None：PATH 命中优先，其次候选绝对路径。"""
+    for cand in TOOL_SEARCH.get(name, []):
+        if "\\" in cand or "/" in cand:
+            if os.path.isfile(cand):
+                return cand
+        else:
+            found = shutil.which(cand)
+            if found:
+                return found
+    return None
+
+
+def _run_capture(cmd, timeout):
+    """统一子进程：UTF-8 容错、超时；成功(退出码0)返回 stdout 文本，否则 None。"""
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=timeout)
+        return proc.stdout.strip() if proc.returncode == 0 else None
+    except (subprocess.TimeoutExpired, OSError, UnicodeDecodeError):
+        return None
+
+
+def run_die(path, die_bin, timeout=30):
+    """DIE 控制台查壳/编译器识别；返回 (文本行列表|None, 错误说明|None)。"""
+    if not die_bin:
+        return None, "未找到 DIE(diec.exe)，跳过查壳"
+    out = _run_capture([die_bin, path], timeout)
+    if out is None:
+        return None, "DIE 运行失败或超时"
+    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    return lines, None
+
+
+def run_floss(path, floss_bin, timeout=180):
+    """FLOSS 提取栈/解码(混淆)字符串（JSON 输出直接解析），不重复静态串；
+    返回 (字符串列表|None, 错误|None)。"""
+    if not floss_bin:
+        return None, "未找到 FLOSS，跳过隐藏字符串提取"
+    out = _run_capture([floss_bin, "-j", "--only", "stack", "decoded",
+                        "-n", "6", path], timeout)
+    if out is None:
+        return None, "FLOSS 运行失败或超时（大文件较慢，可加长超时）"
+    try:
+        data = json.loads(out)
+    except ValueError:
+        return None, "FLOSS 输出解析失败（非 JSON）"
+    strings = []
+    for key in ("stack_strings", "decoded_strings"):
+        for item in data.get(key, []) or []:
+            s = item.get("string") if isinstance(item, dict) else item
+            if s and str(s) not in strings:
+                strings.append(str(s))
+    return strings[:40], None
+
+
+# ----------------------------------------------------------------------------
 # 归类 + 打分
 # ----------------------------------------------------------------------------
 def _api_matches(api_norm, m):
@@ -908,7 +978,7 @@ def score(imports, trusted=False):
 # ----------------------------------------------------------------------------
 # 报告
 # ----------------------------------------------------------------------------
-def build_report(path, data, imports, is64, modules, total, level, findings, common, pe_info=None, runtime=None, net_ev=None):
+def build_report(path, data, imports, is64, modules, total, level, findings, common, pe_info=None, runtime=None, net_ev=None, external=None):
     size = len(data)
     sha = hashlib.sha256(data).hexdigest()
     fname = os.path.basename(path)
@@ -1090,6 +1160,38 @@ def build_report(path, data, imports, is64, modules, total, level, findings, com
         lines.append(f"- {v}")
     lines.append("")
 
+    if external:
+        lines.append("## 外部工具补充（可选开关接入）\n")
+        die = external.get("die")
+        if die:
+            dl, de = die
+            if dl:
+                lines.append("### DIE 查壳 / 编译器识别")
+                for ln in dl:
+                    lines.append(f"- {ln}")
+                lines.append("")
+            elif de:
+                lines.append(f"- DIE：{de}")
+            else:
+                lines.append("- DIE：未识别到额外壳/编译器信息")
+        fl = external.get("floss")
+        if fl:
+            fs, fe = fl
+            if fs:
+                lines.append("### FLOSS 隐藏（栈/解码）字符串")
+                for s in fs:
+                    lines.append(f"- {s}")
+                lines.append("")
+            elif fe:
+                lines.append(f"- FLOSS：{fe}")
+            else:
+                lines.append("- FLOSS：未发现栈/解码隐藏字符串")
+        upx = external.get("upx")
+        if upx and external.get("packer"):
+            lines.append(f"- UPX 脱壳命令（手动执行，勿在粗筛中改写样本）："
+                         f"`{upx} -d \"{path}\"`")
+        lines.append("")
+
     lines.append("- 本报告基于**导入表 + 字符串**静态粗筛，属于第一层判断，**不等于运行时行为**；"
                  "命中高危 API 只代表“具备该能力”，是否真正使用需结合反编译确认。")
     if runtime and runtime.get("hints"):
@@ -1250,6 +1352,10 @@ def main():
                     default="low", help="只显示达到该置信度的模块（high=≥2精确API/medium=1/low=全显，默认 low）")
     ap.add_argument("--quiet", action="store_true",
                     help="精简输出，只打印风险结论与退出码（供流水线/CI）")
+    ap.add_argument("--die", action="store_true",
+                    help="可选：调用 DIE(diec.exe) 查壳/编译器识别，结果并入报告")
+    ap.add_argument("--floss", action="store_true",
+                    help="可选：调用 FLOSS 提取栈/解码隐藏字符串，结果并入报告")
     ap.add_argument("--version", action="version", version="pe_module_scan 1.0")
     args = ap.parse_args()
 
@@ -1384,8 +1490,34 @@ def main():
             if pe_info.get("rwx_sections"):
                 print(f"⚠️ RWX 节区（可写可执行，可疑）：{', '.join(pe_info['rwx_sections'])}")
 
+    external = None
+    if args.die or args.floss:
+        external = {}
+        if args.die:
+            external["die"] = run_die(path, find_tool("die"))
+            dl, de = external["die"]
+            if not args.quiet:
+                if dl:
+                    print("\n[DIE 查壳 / 编译器识别]")
+                    for ln in dl:
+                        print("  " + ln)
+                else:
+                    print(f"\n[DIE] {de}")
+        if args.floss:
+            external["floss"] = run_floss(path, find_tool("floss"))
+            fs, fe = external["floss"]
+            if not args.quiet:
+                if fs:
+                    print("\n[FLOSS 隐藏（栈/解码）字符串]")
+                    for s in fs:
+                        print("  " + s)
+                else:
+                    print(f"\n[FLOSS] {fe}")
+        external["upx"] = find_tool("upx")
+        external["packer"] = bool(pe_info and pe_info.get("packer"))
+
     if args.report:
-        report = build_report(path, data, imports, is64, modules, total, level, findings, common, pe_info, runtime, net_ev)
+        report = build_report(path, data, imports, is64, modules, total, level, findings, common, pe_info, runtime, net_ev, external=external)
         try:
             with open(args.report, "w", encoding="utf-8-sig") as f:
                 f.write(report)

@@ -281,5 +281,44 @@ if _unmapped:
     print("  未归类计分API:", _unmapped)
 check("计分API全部可归到模块", _unmapped == [])
 
+# --- 外部工具链（可选开关 DIE/FLOSS/UPX）---
+print("[外部工具链]")
+check("find_tool 未知名返回None", mod.find_tool("__no_such_tool__") is None)
+check("_run_capture 不存在命令返回None", mod._run_capture(["__no_such_cmd__"], 5) is None)
+_dl, _de = mod.run_die("x.exe", None)
+check("run_die 无工具返回提示", _dl is None and _de and "DIE" in _de)
+_fls, _fe = mod.run_floss("x.exe", None)
+check("run_floss 无工具返回提示", _fls is None and _fe and "FLOSS" in _fe)
+
+_ext = {
+    "die": (["PE64", "MSVC 2022"], None),
+    "floss": (["hidden-c2.example"], None),
+    "upx": r"C:\Tools\upx\upx-5.2.1-win64\upx.exe",
+    "packer": True,
+}
+_rep3 = mod.build_report("p.exe", b"MZ", [], False,
+                         [_mk("network", 2)], 30, "低危", [], [],
+                         None, None,
+                         net_ev={"urls": [], "ips": [], "domains": []}, external=_ext)
+check("报告渲染DIE查壳小节", "DIE 查壳" in _rep3 and "MSVC 2022" in _rep3)
+check("报告渲染FLOSS隐藏串小节", "隐藏（栈/解码）字符串" in _rep3 and "hidden-c2.example" in _rep3)
+check("UPX加壳时给出脱壳命令", "-d" in _rep3 and "upx" in _rep3.lower())
+
+_ext_none = {"die": (None, "未找到 DIE"), "floss": (None, "未找到 FLOSS"),
+             "upx": None, "packer": False}
+_rep4 = mod.build_report("p.exe", b"MZ", [], False,
+                         [_mk("network", 2)], 30, "低危", [], [],
+                         None, None,
+                         net_ev={"urls": [], "ips": [], "domains": []}, external=_ext_none)
+check("缺工具只给提示不崩", "未找到 DIE" in _rep4 and "未找到 FLOSS" in _rep4)
+
+_ext_empty = {"die": (["PE64"], None), "floss": ([], None),
+              "upx": None, "packer": False}
+_rep5 = mod.build_report("p.exe", b"MZ", [], False,
+                         [_mk("network", 2)], 30, "低危", [], [],
+                         None, None,
+                         net_ev={"urls": [], "ips": [], "domains": []}, external=_ext_empty)
+check("FLOSS空列表提示未发现", "未发现栈/解码隐藏字符串" in _rep5)
+
 print(f"\n结果：{PASS} 通过 / {FAIL} 失败")
 sys.exit(1 if FAIL else 0)

@@ -18,6 +18,11 @@ FLOSS（提取混淆/栈字符串，补明文字符串）
 x64dbg（动态单步跟踪） / Ghidra（静态反编译深挖）
 ```
 
+> DIE 与 FLOSS 已通过开关串进粗筛器，一条命令跑完；缺工具自动跳过，不影响主流程：
+> `python tools\pe_module_scan.py app.exe --die --floss --report report.md`
+> UPX 不自动脱壳（避免改写样本），检测到 UPX 壳时报告里直接给出 `upx -d` 手动命令。
+
+
 ## 工具清单
 
 | 工具 | 版本 | 位置 / 启动 | 用途 |

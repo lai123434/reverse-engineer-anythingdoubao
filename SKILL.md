@@ -143,6 +143,11 @@ python tools\pe_module_scan.py --batch "C:\downloads" --report rank.md
 
 # 基线巡检：--baseline 存哈希+分数，复扫标注 新增/已替换/风险上升/已见
 python tools\pe_module_scan.py --batch "C:\downloads" --baseline db.json
+
+# 可选外部工具链（缺工具自动跳过，不影响主流程）：
+#   --die    调 DIE(diec.exe) 查壳/编译器识别，并入报告
+#   --floss  调 FLOSS 提栈/解码隐藏字符串，并入报告
+python tools\pe_module_scan.py "C:\path\to\app.exe" --die --floss --report report.md
 ```
 
 ### 输出怎么读

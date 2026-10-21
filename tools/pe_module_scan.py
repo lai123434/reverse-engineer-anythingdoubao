@@ -440,11 +440,15 @@ def parse_pe_imports(data):
     num_sections = struct.unpack_from("<H", data, coff + 2)[0]
     opt_size = struct.unpack_from("<H", data, coff + 16)[0]
     opt = coff + 20
+    if opt + 2 > len(data):
+        return None, None, None
     magic = struct.unpack_from("<H", data, opt)[0]
     is64 = magic == 0x20b
 
     dd_off = opt + (112 if is64 else 96)
-    import_rva = struct.unpack_from("<I", data, dd_off + 8)[0]
+    import_rva = 0
+    if dd_off + 12 <= len(data):
+        import_rva = struct.unpack_from("<I", data, dd_off + 8)[0]
 
     sec_off = opt + opt_size
     sections = []
@@ -475,7 +479,8 @@ def parse_pe_imports(data):
             dll = _cstr(data, rva2off(name_rva)) or "?"
             thunk = oft if oft else ft
             to = rva2off(thunk)
-            while to and to < len(data):
+            width = 8 if is64 else 4
+            while to and to + width <= len(data):
                 if is64:
                     val = struct.unpack_from("<Q", data, to)[0]
                     to += 8
@@ -536,8 +541,13 @@ def compute_pe_info(data):
     num_sec = struct.unpack_from("<H", data, coff + 2)[0]
     opt_size = struct.unpack_from("<H", data, coff + 16)[0]
     opt = coff + 20
+    if opt + 2 > len(data):
+        return None
     magic = struct.unpack_from("<H", data, opt)[0]
     is64 = magic == 0x20b
+    # optional header 至少要覆盖到 subsystem（64位 opt+68 / 32位 opt+44），不足视为不可解析
+    if opt + (68 if is64 else 44) + 2 > len(data):
+        return None
     entrypoint = struct.unpack_from("<I", data, opt + 16)[0]
     # COFF: coff+4 TimeDateStamp(4)，coff+18 Characteristics(2)；0x2000 = IMAGE_FILE_DLL
     timestamp = struct.unpack_from("<I", data, coff + 4)[0]
@@ -547,10 +557,12 @@ def compute_pe_info(data):
     subsystem = struct.unpack_from("<H", data, opt + (68 if is64 else 44))[0]
 
     dd = opt + (112 if is64 else 96)
-    # 安全目录（数字签名）为数据目录第 5 项（index 4）
-    sec_off = struct.unpack_from("<I", data, dd + 32)[0]
-    sec_size = struct.unpack_from("<I", data, dd + 36)[0]
-    signed = sec_off != 0 and sec_size > 0
+    # 安全目录（数字签名）为数据目录第 5 项（index 4）；越界视为无签名，不抛错
+    signed = False
+    if dd + 40 <= len(data):
+        sec_off = struct.unpack_from("<I", data, dd + 32)[0]
+        sec_size = struct.unpack_from("<I", data, dd + 36)[0]
+        signed = sec_off != 0 and sec_size > 0
 
     # 常见加壳器/打包器节区名 -> 名称（小写匹配）
     PACKER_SECTION = {
@@ -724,7 +736,9 @@ def detect_runtime(data, strings):
             opt = coff + 20
             magic = struct.unpack_from("<H", data, opt)[0]
             dd = opt + (112 if magic == 0x20b else 96)
-            clr_rva = struct.unpack_from("<I", data, dd + 14 * 8)[0]
+            clr_rva = 0
+            if dd + 14 * 8 + 4 <= len(data):
+                clr_rva = struct.unpack_from("<I", data, dd + 14 * 8)[0]
             if clr_rva:
                 result["dotnet"] = True
                 result["hints"].append(".NET 托管程序：建议改用 inspect-managed-artifact / 反编译 CIL")
@@ -1050,7 +1064,8 @@ def build_report(path, data, imports, is64, modules, total, level, findings, com
     if pe_info and pe_info.get("rwx_sections"):
         verdict.append("存在可写可执行(RWX)节区，符合代码注入/自修改特征，建议重点核查。")
     netm = next((m for m in modules if m.get("net_ev")), None)
-    if netm and (netm["net_ev"]["urls"] or netm["net_ev"]["ips"]):
+    if netm and (netm["net_ev"]["urls"] or netm["net_ev"]["ips"]
+                 or netm["net_ev"]["domains"]):
         verdict.append("含硬编码外联地址，建议核对是否为已知合法服务器。")
     if runtime and runtime.get("packer"):
         verdict.append(f"疑似 {runtime['packer']} 加壳。")
@@ -1161,8 +1176,8 @@ def _batch_scan(batch_dir, min_confidence, report=None, baseline=None):
         except (subprocess.TimeoutExpired, OSError, UnicodeDecodeError):
             score, rc = -1, -1
 
-        # 基线对比：新增 / 已替换 / 风险上升(≥10) / 已见；非PE单列，读取/超时失败不污染基线库
-        if score >= 0:
+        # 基线对比：新增 / 已替换 / 风险上升(≥10) / 已见；非PE单列，读取/超时失败/缺哈希不污染基线库
+        if score >= 0 and sha:
             status = _baseline_status(old_db.get(rel), sha, score)
             new_db[rel] = {"sha": sha, "score": score,
                            "ts": datetime.datetime.now().isoformat(timespec="seconds")}

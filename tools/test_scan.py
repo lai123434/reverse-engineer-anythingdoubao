@@ -170,6 +170,16 @@ check("检出Electron运行时", mod.detect_runtime(b"MZ", ["electron.app"])["ru
 check("短buffer运行时检测不崩", mod.detect_runtime(b"MZ", [])["runtime"] is None)
 check("截断MZ头导入解析返回None", mod.parse_pe_imports(b"MZ\x90")[0] is None)
 check("截断MZ头PE信息返回None", mod.compute_pe_info(b"MZ\x90") is None)
+# 伪造 PE\0\0 头但 optional header 落在文件外：不得抛 struct/IndexError，返回 None
+_fk = bytearray(0x60)
+_fk[0:2] = b"MZ"
+_fk[0x3C:0x40] = bytes([0x50, 0, 0, 0])
+_fk[0x50:0x54] = b"PE\0\0"
+_fkb = bytes(_fk)
+check("PE头截断导入解析不崩返回None", mod.parse_pe_imports(_fkb)[0] is None)
+check("PE头截断PE信息不崩返回None", mod.compute_pe_info(_fkb) is None)
+# detect_runtime 对截断PE不抛异常
+check("截断PE运行时检测不崩", isinstance(mod.detect_runtime(_fkb, [])["hints"], list))
 _zero, _zlvl, _zf, _zc = mod.score([])
 check("空导入打分为0且安全", _zero == 0 and "安全" in _zlvl)
 _c2 = {x["key"]: x for x in mod.classify(

@@ -5,7 +5,7 @@
 
 ## 当前状态（2026-10-21）
 
-- 回归断言 **107 项全绿**；13 个合法系统程序/库（notepad x86/x64、calc、taskmgr、
+- 回归断言 **110 项全绿**；13 个合法系统程序/库（notepad x86/x64、calc、taskmgr、
   regedit、explorer、kernel32/advapi32/user32/gdi32/wininet/bcrypt/ws2_32）全部落
   安全/低危区，无高危误报。
 - 修复节区 Characteristics 偏移（b+36，误作 b+24），此前 RWX 可写可执行检测恒不命中。
@@ -69,6 +69,16 @@
 - 失败条目不写入基线指纹库，避免下次复扫把失败文件当成“已见/已替换”。
 - MapiSendMail(mapi32.dll) 补入 network 的 DLL 限定，邮件外泄正确归入网络模块。
 - 时间戳渲染由 `datetime.UTC`(Py3.11+) 改为 `datetime.timezone.utc`，兼容旧版本。
+
+## 第四轮：PE 解析层截断/损坏容错（2026-10-21，110 项断言）
+
+换角度复查二进制解析层，修复损坏 PE 直接抛 struct.error/IndexError 崩溃的隐患：
+- 导入表 thunk 读取改为按字宽（x64=8 / x86=4）做边界检查，截断不再越界。
+- optional header 起点、数据目录（导入表/安全目录/CLR）、subsystem 偏移全部加
+  越界判断，损坏 PE 返回 None/缺省值而非抛异常。
+- 批量中读不到哈希(sha="")的条目不写入基线，避免复扫误判“已替换”。
+- 报告“硬编码外联”结论补全域名（原先只看 URL/IP）。
+- 补 3 条截断 PE 容错断言，损坏样本端到端干净退出码 3，无 traceback。
 
 ## 待用户 / 外部项（本机无法自动完成）
 1. **真实样本动态校准**：dc 虚拟机已加固（删共享、clean-base 快照、剪贴板/拖拽关），
